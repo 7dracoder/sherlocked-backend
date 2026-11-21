@@ -1,0 +1,14 @@
+{
+  "facial_evidence_weight": 0.217,
+  "vocal_prosody_weight": 0.376,
+  "lexical_consistency_weight": 0.407,
+  "deal_cue_confidence_threshold": 0.72,
+  "game_min_playable_confidence": 0.5,
+  "present_guess_as_exploratory": true,
+  "allow_micro_expression_claim": false,
+  "calibration_source": "research/run_experiments.py",
+  "camera_gain_over_audio": 0.0,
+  "camera_gain_p_value": 1.0,
+  "scientific_status": "pending_live_gemini_and_independent_human_dataset (harness validated on consented photographic fixtures)",
+  "notes": "Explicit 24fps tracker F1=0.57 vs 1fps video sampler F1=0.00. Camera-vs-audio delta=+0.00 (p=1.000); exploratory disclosure=enabled per spec."
+}

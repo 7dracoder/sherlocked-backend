@@ -29,9 +29,6 @@ class SessionRecord:
     followup_questions: list[str] = field(default_factory=list)
     updated_guess: GameGuessRecord | None = None
     manual_stories_override: list[StorySpan] | None = None
-    # Dedup conversation ask/announce so the same claim is not whispered every turn.
-    last_conversation_cue_key: str | None = None
-    last_conversation_cue_action: str | None = None
 
 
 class SessionStore:
@@ -101,8 +98,6 @@ class SessionStore:
                     if raw.get("manual_stories_override") is not None
                     else None
                 ),
-                last_conversation_cue_key=raw.get("last_conversation_cue_key"),
-                last_conversation_cue_action=raw.get("last_conversation_cue_action"),
             )
 
     def save_session(self, record: SessionRecord) -> None:
@@ -120,8 +115,6 @@ class SessionStore:
                 if record.manual_stories_override is not None
                 else None
             ),
-            "last_conversation_cue_key": record.last_conversation_cue_key,
-            "last_conversation_cue_action": record.last_conversation_cue_action,
         }
         with self._lock, self._connect() as conn:
             conn.execute(

@@ -164,11 +164,7 @@ class GameGuessRecord(BaseModel):
 
 
 class DealCueOutput(BaseModel):
-    # whisper_question: classic deal coaching cue
-    # ask_followup: mid-confidence doubt — ask another question
-    # announce_lie: high-confidence call that a claim sounds false
-    # silence: stay quiet
-    action: Literal["whisper_question", "ask_followup", "announce_lie", "silence"]
+    action: Literal["whisper_question", "silence"]
     identified_term: str | None = None
     spoken_whisper: str | None = None
     confidence: float = 0.0

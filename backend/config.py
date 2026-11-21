@@ -38,9 +38,6 @@ class LearnedWeights:
     vocal_prosody_weight: float = 0.38
     lexical_consistency_weight: float = 0.40
     deal_cue_confidence_threshold: float = 0.72
-    # Ordinary conversation / soft deal: ask when unsure, announce when sure.
-    conversation_ask_threshold: float = 0.42
-    conversation_announce_threshold: float = 0.74
     game_min_playable_confidence: float = 0.55
     present_guess_as_exploratory: bool = True
     allow_micro_expression_claim: bool = False

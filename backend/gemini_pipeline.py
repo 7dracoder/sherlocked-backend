@@ -287,7 +287,7 @@ def _carve_three_stories_from_utterances(
             return packed
 
     # 2b) First-person / discourse clause splits — common live ASR with no punctuation.
-    # "I climbed… I never… I once…" or "and then / finally / also"
+    # Require ≥5 words per claim so mid-story "I … I …" does not invent a finished round.
     clause_pat = re.compile(
         r"(?:^|\s+)(?="
         r"I\s+(?:(?:never|once|used|just|still|always|also|even)\s+)?[a-z]"
@@ -306,50 +306,28 @@ def _carve_three_stories_from_utterances(
         for i, pos in enumerate(starts):
             end = starts[i + 1] if i + 1 < len(starts) else len(joined)
             chunk = joined[pos:end].strip(" ,")
-            if chunk:
+            if chunk and len(chunk.split()) >= 5:
                 parts.append(chunk)
-        # Prefer exactly the first three first-person claims when many "I" appear.
         if len(parts) > 3:
-            # Keep first, merge middle, keep last when 4+; if 3+ short claims take first 3.
-            short = [p for p in parts if 3 <= len(p.split()) <= 18]
+            short = [p for p in parts if 5 <= len(p.split()) <= 22]
             parts = short[:3] if len(short) >= 3 else [parts[0], " ".join(parts[1:-1]), parts[-1]]
-        packed = _pack(parts)
-        if len(packed) == 3:
-            return packed
+        if len(parts) >= 3 and sum(len(p.split()) for p in parts[:3]) >= 18:
+            packed = _pack(parts[:3])
+            if len(packed) == 3:
+                return packed
 
-    # 3) Multiple short utterances (≥2) without ordinals — map by order / pause.
+    # 3) Three+ pause-separated utterances without ordinals — map by order.
+    # Do NOT invent story 3 by slicing a single remaining utterance in half.
     if len(player_utts) >= 3:
-        return {
-            1: [player_utts[0]],
-            2: [player_utts[1]],
-            3: [player_utts[2]],
-        }
-    if len(player_utts) == 2:
-        a, b = player_utts
-        words_b = b.text.split()
-        if len(words_b) >= 8:
-            mid = len(words_b) // 2
-            left = " ".join(words_b[:mid])
-            right = " ".join(words_b[mid:])
-            mid_t = (b.start_sec + b.end_sec) / 2.0
+        substantive = [u for u in player_utts if len(u.text.split()) >= 4]
+        if len(substantive) >= 3:
             return {
-                1: [a],
-                2: [b.model_copy(update={"text": left + ".", "end_sec": mid_t})],
-                3: [b.model_copy(update={"text": right + ".", "start_sec": mid_t})],
+                1: [substantive[0]],
+                2: [substantive[1]],
+                3: [substantive[2]],
             }
 
-    # 4) Last resort: equal word thirds on the mega-string.
-    words = joined.split()
-    if len(words) >= 9:
-        n = len(words)
-        i1, i2 = max(3, n // 3), max(6, (2 * n) // 3)
-        if i1 >= i2:
-            i2 = min(n - 3, i1 + 3)
-        parts = [" ".join(words[:i1]), " ".join(words[i1:i2]), " ".join(words[i2:])]
-        packed = _pack(parts)
-        if len(packed) == 3:
-            return packed
-
+    # No word-thirds fallback — wait for the speaker to finish all three stories.
     return dict(existing or {})
 
 

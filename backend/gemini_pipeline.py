@@ -820,14 +820,8 @@ class SherlockedPipeline:
             anchors = len(CONCRETE_ANCHOR_WORDS.findall(txt))
             words = txt.split()
             # Higher score => stronger fabrication candidate relative to sibling stories.
-            # Hedge weight is intentionally strong — live face blips on story 1 must not
-            # outweigh clear "kind of / probably / somehow" language on the real lie.
-            l_score = (
-                0.95 * hedges
-                - 0.42 * anchors
-                + (0.22 if len(words) < 9 else 0.0)
-                + (0.18 if hedges >= 2 else 0.0)
-            )
+            # Fair within-speaker compare — no hard-coded story number preference.
+            l_score = 0.55 * hedges - 0.38 * anchors + (0.25 if len(words) < 9 else 0.0)
             lex_raw.append(l_score)
 
             # Prosody score
@@ -895,8 +889,8 @@ class SherlockedPipeline:
 
         w_lex = self.weights.lexical_consistency_weight
         w_voc = 0.0 if modality_mode == ModalityMode.TRANSCRIPT_ONLY else self.weights.vocal_prosody_weight
-        # Face only ranks when ≥2 stories show usable motion — a single early glance
-        # at the phone otherwise falsely crowns Story #1 as the lie.
+        # Use face only when motion appears on ≥2 stories. A single early phone-glance
+        # blip is noise, not evidence — otherwise any story under that blip wins.
         face_hits = sum(1 for f in fac_raw if f > 0.08)
         w_fac = (
             self.weights.facial_evidence_weight
@@ -907,21 +901,9 @@ class SherlockedPipeline:
         w_lex, w_voc, w_fac = w_lex / w_sum, w_voc / w_sum, w_fac / w_sum
 
         combined = [
-            2.35 * (w_lex * lex_raw[i] + w_voc * voc_raw[i] + w_fac * fac_raw[i])
+            2.15 * (w_lex * lex_raw[i] + w_voc * voc_raw[i] + w_fac * fac_raw[i])
             for i in range(3)
         ]
-        # Hard lexical veto: if one story has clearly more hedges than the others,
-        # never let weak face/prosody flip the pick away from it.
-        hedge_counts = [len(HEDGING_WORDS.findall(s.transcript)) for s in stories]
-        best_hedge_i = int(max(range(3), key=lambda i: hedge_counts[i]))
-        if hedge_counts[best_hedge_i] >= 2 and hedge_counts[best_hedge_i] >= max(
-            hedge_counts[j] for j in range(3) if j != best_hedge_i
-        ) + 2:
-            for i in range(3):
-                if i == best_hedge_i:
-                    combined[i] += 1.35
-                else:
-                    combined[i] -= 0.25
         probs_list = _softmax(combined)
         probs = {
             "story_1": probs_list[0],

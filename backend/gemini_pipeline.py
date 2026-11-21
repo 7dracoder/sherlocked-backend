@@ -326,19 +326,7 @@ def _carve_three_stories_from_utterances(
                 3: [substantive[2]],
             }
 
-    # 4) Last resort for mega-ASR blobs with enough content (≥18 words + ≥3 I-claims).
-    words = joined.split()
-    i_hits = len(re.findall(r"(?:^|\s)I\s+[a-z]", joined, flags=re.IGNORECASE))
-    if len(words) >= 18 and i_hits >= 3:
-        n = len(words)
-        i1, i2 = max(3, n // 3), max(6, (2 * n) // 3)
-        if i1 >= i2:
-            i2 = min(n - 3, i1 + 3)
-        parts = [" ".join(words[:i1]), " ".join(words[i1:i2]), " ".join(words[i2:])]
-        packed = _pack(parts)
-        if len(packed) == 3:
-            return packed
-
+    # No equal word-thirds — that mis-bucketed the hedged lie into Story #1 on device.
     return dict(existing or {})
 
 
@@ -751,7 +739,8 @@ class SherlockedPipeline:
             end_s = seg_list[-1].end_sec
             has_overlap = any(s.overlapping_speech for s in seg_list)
             word_cnt = len(text.split())
-            complete = (word_cnt >= 4) and not has_overlap and not text.endswith("...")
+            # Require a real clause — tiny word-third crumbs must not lock a guess.
+            complete = (word_cnt >= 6) and not has_overlap and not text.endswith("...")
 
             story_events = [
                 e
@@ -830,8 +819,15 @@ class SherlockedPipeline:
             hedges = len(HEDGING_WORDS.findall(txt))
             anchors = len(CONCRETE_ANCHOR_WORDS.findall(txt))
             words = txt.split()
-            # Higher score => stronger fabrication candidate relative to sibling stories
-            l_score = 0.55 * hedges - 0.38 * anchors + (0.25 if len(words) < 9 else 0.0)
+            # Higher score => stronger fabrication candidate relative to sibling stories.
+            # Hedge weight is intentionally strong — live face blips on story 1 must not
+            # outweigh clear "kind of / probably / somehow" language on the real lie.
+            l_score = (
+                0.95 * hedges
+                - 0.42 * anchors
+                + (0.22 if len(words) < 9 else 0.0)
+                + (0.18 if hedges >= 2 else 0.0)
+            )
             lex_raw.append(l_score)
 
             # Prosody score
@@ -899,18 +895,33 @@ class SherlockedPipeline:
 
         w_lex = self.weights.lexical_consistency_weight
         w_voc = 0.0 if modality_mode == ModalityMode.TRANSCRIPT_ONLY else self.weights.vocal_prosody_weight
+        # Face only ranks when ≥2 stories show usable motion — a single early glance
+        # at the phone otherwise falsely crowns Story #1 as the lie.
+        face_hits = sum(1 for f in fac_raw if f > 0.08)
         w_fac = (
             self.weights.facial_evidence_weight
-            if modality_mode == ModalityMode.AUDIO_PLUS_VISIBLE_FACE and any(fac_raw)
+            if modality_mode == ModalityMode.AUDIO_PLUS_VISIBLE_FACE and face_hits >= 2
             else 0.0
         )
         w_sum = max(1e-6, w_lex + w_voc + w_fac)
         w_lex, w_voc, w_fac = w_lex / w_sum, w_voc / w_sum, w_fac / w_sum
 
         combined = [
-            2.15 * (w_lex * lex_raw[i] + w_voc * voc_raw[i] + w_fac * fac_raw[i])
+            2.35 * (w_lex * lex_raw[i] + w_voc * voc_raw[i] + w_fac * fac_raw[i])
             for i in range(3)
         ]
+        # Hard lexical veto: if one story has clearly more hedges than the others,
+        # never let weak face/prosody flip the pick away from it.
+        hedge_counts = [len(HEDGING_WORDS.findall(s.transcript)) for s in stories]
+        best_hedge_i = int(max(range(3), key=lambda i: hedge_counts[i]))
+        if hedge_counts[best_hedge_i] >= 2 and hedge_counts[best_hedge_i] >= max(
+            hedge_counts[j] for j in range(3) if j != best_hedge_i
+        ) + 2:
+            for i in range(3):
+                if i == best_hedge_i:
+                    combined[i] += 1.35
+                else:
+                    combined[i] -= 0.25
         probs_list = _softmax(combined)
         probs = {
             "story_1": probs_list[0],
@@ -1446,7 +1457,13 @@ class SherlockedPipeline:
                 followup_asked = req.request_followup_questions or any(
                     FOLLOWUP_REQUEST_PATTERN.search(u.text) for u in pre_reveal_utts
                 )
-                if session.initial_guess is None:
+                total_words = sum(len(s.transcript.split()) for s in complete_stories[:3])
+                solid_round = total_words >= 20 and all(
+                    len(s.transcript.split()) >= 6 for s in complete_stories[:3]
+                )
+                if not solid_round:
+                    status_label = "Two Truths & a Lie · Waiting for fuller story detail"
+                else:
                     candidate_guess = self._score_stories_multimodal(
                         stories=complete_stories[:3],
                         utterances=pre_reveal_utts,
@@ -1477,11 +1494,36 @@ class SherlockedPipeline:
                         execution_mode = "local_multimodal_engine"
                         live_meta = {"live_fast_path": True}
                     assert candidate_guess is not None
-                    session.initial_guess = candidate_guess
-                    spoken_cue = candidate_guess.spoken_whisper
-                    status_label = f"Game · Initial guess locked (#{candidate_guess.chosen_story_number})"
-                else:
-                    status_label = f"Game · Initial guess locked (#{session.initial_guess.chosen_story_number})"
+
+                    should_lock = session.initial_guess is None
+                    # Correct a weak early lock (often Story #1 from a phone-glance face blip)
+                    # when the fuller transcript clearly points elsewhere.
+                    if (
+                        session.initial_guess is not None
+                        and candidate_guess.chosen_story_number != session.initial_guess.chosen_story_number
+                        and (
+                            session.initial_guess.sparse_visual_disclosure
+                            or session.initial_guess.confidence < 0.62
+                            or candidate_guess.confidence >= session.initial_guess.confidence + 0.12
+                        )
+                        and candidate_guess.confidence >= 0.55
+                    ):
+                        should_lock = True
+
+                    if should_lock:
+                        prev = session.initial_guess.chosen_story_number if session.initial_guess else None
+                        session.initial_guess = candidate_guess
+                        spoken_cue = candidate_guess.spoken_whisper
+                        if prev is not None and prev != candidate_guess.chosen_story_number:
+                            spoken_cue = (
+                                f"Updating — I think number {candidate_guess.chosen_story_number} "
+                                f"is the lie."
+                            )
+                        status_label = f"Game · Initial guess locked (#{candidate_guess.chosen_story_number})"
+                    else:
+                        status_label = (
+                            f"Game · Initial guess locked (#{session.initial_guess.chosen_story_number})"
+                        )
 
                 if followup_asked and not session.followup_questions:
                     session.followup_questions = self._build_comparable_followup_questions(complete_stories[:3])

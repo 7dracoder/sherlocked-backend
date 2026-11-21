@@ -1215,14 +1215,14 @@ class SherlockedPipeline:
 
         cited: list[str] = []
         obs: str | None = None
-        assert ev is not None
-        for fid in (ev.before_frame_id, ev.during_frame_id, ev.after_frame_id):
-            if fid in usable_frame_ids and fid not in cited:
-                cited.append(fid)
-        obs = sanitize_observable_text(
-            ev.observable_action,
-            self.weights.allow_micro_expression_claim,
-        )
+        if ev is not None:
+            for fid in (ev.before_frame_id, ev.during_frame_id, ev.after_frame_id):
+                if fid in usable_frame_ids and fid not in cited:
+                    cited.append(fid)
+            obs = sanitize_observable_text(
+                ev.observable_action,
+                self.weights.allow_micro_expression_claim,
+            )
 
         ask_t = self.weights.conversation_ask_threshold
         ann_t = self.weights.conversation_announce_threshold

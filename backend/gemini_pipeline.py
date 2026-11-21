@@ -286,41 +286,37 @@ def _carve_three_stories_from_utterances(
         if len(packed) == 3:
             return packed
 
-    # 2b) First-person / discourse clause splits — only when the round looks finished:
-    # multiple pause-separated utterances, or clear sentence punctuation. A single
-    # run-on "I … I … I …" mid-story must NOT invent three complete stories.
-    has_sentence_breaks = len(re.findall(r"[.!?]", joined)) >= 2
-    multi_utt = len(player_utts) >= 3
-    if multi_utt or has_sentence_breaks:
-        clause_pat = re.compile(
-            r"(?:^|\s+)(?="
-            r"I\s+(?:(?:never|once|used|just|still|always|also|even)\s+)?[a-z]"
-            r"|I'?m\s+"
-            r"|(?:and\s+)?(?:then|finally|lastly|also|another(?:\s+one)?)\b"
-            r"|(?:first(?:ly)?|second(?:ly)?|third(?:ly)?)\b"
-            r")",
-            re.IGNORECASE,
-        )
-        starts = [m.start() for m in clause_pat.finditer(" " + joined)]
-        starts = [max(0, s - 1) for s in starts]
-        starts = sorted({s for s in starts if s < len(joined)})
-        if len(starts) >= 3:
-            parts = []
-            for i, pos in enumerate(starts):
-                end = starts[i + 1] if i + 1 < len(starts) else len(joined)
-                chunk = joined[pos:end].strip(" ,")
-                if chunk and len(chunk.split()) >= 5:
-                    parts.append(chunk)
-            if len(parts) > 3:
-                short = [p for p in parts if 5 <= len(p.split()) <= 22]
-                parts = short[:3] if len(short) >= 3 else [parts[0], " ".join(parts[1:-1]), parts[-1]]
-            if len(parts) >= 3 and sum(len(p.split()) for p in parts[:3]) >= 18:
-                packed = _pack(parts[:3])
-                if len(packed) == 3:
-                    return packed
+    # 2b) First-person / discourse clause splits — live ASR often has no punctuation.
+    # Require ≥5 words per claim and ≥18 words total so a short mid-story "I… I…"
+    # does not invent a finished round, but three real claims still lock a guess.
+    clause_pat = re.compile(
+        r"(?:^|\s+)(?="
+        r"I\s+(?:(?:never|once|used|just|still|always|also|even)\s+)?[a-z]"
+        r"|I'?m\s+"
+        r"|(?:and\s+)?(?:then|finally|lastly|also|another(?:\s+one)?)\b"
+        r"|(?:first(?:ly)?|second(?:ly)?|third(?:ly)?)\b"
+        r")",
+        re.IGNORECASE,
+    )
+    starts = [m.start() for m in clause_pat.finditer(" " + joined)]
+    starts = [max(0, s - 1) for s in starts]
+    starts = sorted({s for s in starts if s < len(joined)})
+    if len(starts) >= 3:
+        parts = []
+        for i, pos in enumerate(starts):
+            end = starts[i + 1] if i + 1 < len(starts) else len(joined)
+            chunk = joined[pos:end].strip(" ,")
+            if chunk and len(chunk.split()) >= 5:
+                parts.append(chunk)
+        if len(parts) > 3:
+            short = [p for p in parts if 5 <= len(p.split()) <= 22]
+            parts = short[:3] if len(short) >= 3 else [parts[0], " ".join(parts[1:-1]), parts[-1]]
+        if len(parts) >= 3 and sum(len(p.split()) for p in parts[:3]) >= 18:
+            packed = _pack(parts[:3])
+            if len(packed) == 3:
+                return packed
 
     # 3) Three+ pause-separated utterances without ordinals — map by order.
-    # Do NOT invent story 3 by slicing a single remaining utterance in half.
     if len(player_utts) >= 3:
         substantive = [u for u in player_utts if len(u.text.split()) >= 4]
         if len(substantive) >= 3:
@@ -330,7 +326,19 @@ def _carve_three_stories_from_utterances(
                 3: [substantive[2]],
             }
 
-    # No word-thirds fallback — wait for the speaker to finish all three stories.
+    # 4) Last resort for mega-ASR blobs with enough content (≥18 words + ≥3 I-claims).
+    words = joined.split()
+    i_hits = len(re.findall(r"(?:^|\s)I\s+[a-z]", joined, flags=re.IGNORECASE))
+    if len(words) >= 18 and i_hits >= 3:
+        n = len(words)
+        i1, i2 = max(3, n // 3), max(6, (2 * n) // 3)
+        if i1 >= i2:
+            i2 = min(n - 3, i1 + 3)
+        parts = [" ".join(words[:i1]), " ".join(words[i1:i2]), " ".join(words[i2:])]
+        packed = _pack(parts)
+        if len(packed) == 3:
+            return packed
+
     return dict(existing or {})
 
 
